@@ -3,8 +3,6 @@ import numpy as np
 from scipy.optimize import linear_sum_assignment
 from neo4j import GraphDatabase
 
-# Importa as classes que você já criou
-# (Assumindo que seu arquivo anterior se chama 'database.py')
 try:
     from database import Neo4jDatabase, ProcessadorDadosTreino
 except ImportError:
@@ -12,10 +10,7 @@ except ImportError:
     exit()
 
 class GeradorTreino:
-    """
-    Esta classe usa os dados do Neo4j para gerar rotinas
-    de treino personalizadas usando algoritmos de otimização.
-    """
+    """Organiza todos os treinos """
 
     def __init__(self, db_driver):
         """
@@ -30,15 +25,9 @@ class GeradorTreino:
         self.matriz_custo_df = None
         print("Gerador de Treino inicializado e conectado ao banco.")
 
-    def _consultar_matriz_de_custo(self):
-        """
-        Consulta o Neo4j e cria a matriz de custo (GrupoMuscular x Exercício)
-        com os scores MVIC totais como valores.
-        """
-        print("Consultando o banco para criar a Matriz de Custo...")
+    def _criar_matriz_com_pesos(self):
+        """Cria uma matriz com os grupos principais, exercício e seus respectivos pesos somados"""
         
-        # Esta query é o coração do seu "matching"
-        # Ela calcula o score total de cada exercício para cada grupo muscular
         query = """
         MATCH (g:GrupoMuscular)-[:POSSUI]->(m:Musculo)-[r:É_ATIVADO]->(e:Exercicio)
         RETURN g.nome AS Grupo, e.nome AS Exercicio, SUM(r.peso) AS ScoreTotal
@@ -48,7 +37,7 @@ class GeradorTreino:
             data = [record.data() for record in results]
         
         if not data:
-            raise Exception("Não foi possível gerar a matriz. O banco de dados está vazio?")
+            raise Exception("Erro ao gerar a matriz. Verifique os valores da sua database")
 
         # Pivota os dados para criar a matriz Grupo x Exercício
         df = pd.DataFrame(data)
@@ -58,7 +47,7 @@ class GeradorTreino:
             values='ScoreTotal'
         ).fillna(0)
         
-        print(f"Matriz de Custo gerada com sucesso. ({self.matriz_custo_df.shape[0]} grupos, {self.matriz_custo_df.shape[1]} exercícios)")
+        print(f"Matriz gerada com ({self.matriz_custo_df.shape[0]} grupos, {self.matriz_custo_df.shape[1]} exercícios)")
 
 
     def gerar_treino_full_body(self, dias_por_semana: int, grupos_alvo=None):
@@ -73,7 +62,7 @@ class GeradorTreino:
         """
         
         if self.matriz_custo_df is None:
-            self._consultar_matriz_de_custo()
+            self._criar_matriz_com_pesos()
 
         if grupos_alvo is None:
             grupos_alvo = [
@@ -82,35 +71,27 @@ class GeradorTreino:
                 'Posterior', 'Adutor', 'Panturrilha', 'Glúteo'
             ]
         
-        # Filtra a matriz apenas para os grupos que queremos
         matriz_focada = self.matriz_custo_df.loc[grupos_alvo]
         
-        # Otimizador: scipy.optimize.linear_sum_assignment resolve um
-        # *problema de minimização*.
-        # Como queremos *maximizar* o score, nós passamos o *negativo* da matriz.
+        #Colocando o negativo pois a função do scipy minimiza, ao invés de maximizar
         matriz_custo_negativa = -(matriz_focada.copy())
 
         treinos_gerados = {}
         exercicios_ja_usados = []
 
-        for i in range(dias_por_semana):
-            dia_label = chr(ord('A') + i) # Gera Treino A, Treino B, ...
+        for dia in range(dias_por_semana):
+            dia_label = chr(ord('A') + dia)
             
-            # Penaliza exercícios já usados para garantir variedade
-            # Aumentamos o "custo" (negativo do score) para infinito
             if exercicios_ja_usados:
                 matriz_custo_negativa[exercicios_ja_usados] = 999999 
 
-            # --- O ALGORITMO DE MATCHING ---
-            # Roda o algoritmo na matriz de custo
             grupos_indices, exercicios_indices = linear_sum_assignment(matriz_custo_negativa)
-            # --------------------------------
 
             treino_do_dia = []
             for g_idx, e_idx in zip(grupos_indices, exercicios_indices):
                 grupo = matriz_focada.index[g_idx]
                 exercicio = matriz_focada.columns[e_idx]
-                score = matriz_focada.iloc[g_idx, e_idx] # Score original (positivo)
+                score = matriz_focada.iloc[g_idx, e_idx]
                 
                 treino_do_dia.append({
                     "grupo_alvo": grupo,
@@ -118,16 +99,14 @@ class GeradorTreino:
                     "score_mvic_total": round(score, 2)
                 })
                 
-                # Adiciona o exercício à lista de "já usados"
                 exercicios_ja_usados.append(exercicio)
             
             treinos_gerados[f"Treino {dia_label}"] = treino_do_dia
 
         return treinos_gerados
 
-# --- DRIVER CODE (Como executar tudo) ---
+# Driver Code
 
-# Configurações do Banco de Dados
 URI = "neo4j://127.0.0.1:7687"
 AUTH = ("neo4j", "DiscreteTraining")
 ARQUIVO_DADOS = "Training_Data.xlsx" 
@@ -139,24 +118,20 @@ if __name__ == "__main__":
         # 2. Gerar o Treino
         print("\nFase 2: Gerando o treino...")
         
-        # Usamos 'with' para garantir que a conexão com o DB seja aberta e fechada
         with GraphDatabase.driver(URI, auth=AUTH) as driver:
             
-            # Inicializa o gerador com o driver
             gerador = GeradorTreino(driver)
             
-            # --- Pede o treino aqui ---
             DIAS_DE_TREINO = 3
             treinos = gerador.gerar_treino_full_body(dias_por_semana=DIAS_DE_TREINO)
             
-            # 3. Exibir os resultados
-            print("\n--- TREINOS GERADOS COM SUCESSO ---")
+            print("\n --- LISTA DE TREINOS GERADOS --- ")
             for dia, exercicios in treinos.items():
                 print(f"\n========== {dia} ==========")
                 for ex in exercicios:
                     print(f"  Grupo: {ex['grupo_alvo']:<12} | Exercício: {ex['exercicio_escolhido']:<25} | Score: {ex['score_mvic_total']}")
 
     except Exception as e:
-        print(f"### Ocorreu um erro fatal: {e} ###")
+        print(f"############### Ocorreu um erro fatal: {e} ##################")
         import traceback
         traceback.print_exc()
