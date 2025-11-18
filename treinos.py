@@ -1,81 +1,120 @@
 import pandas as pd
-import numpy as np
 from scipy.optimize import linear_sum_assignment
 from neo4j import GraphDatabase
 
 try:
     from database import Neo4jDatabase, ProcessadorDadosTreino
 except ImportError:
-    print("Certifique-se que o arquivo com as classes Neo4jDatabase e ProcessadorDadosTreino se chama 'database.py'")
+    print("Erro: O arquivo 'database.py' não foi encontrado.")
     exit()
 
 class GeradorTreino:
-    """Organiza todos os treinos """
+    """Faz o gerenciamento de toda lógica de criação de treino"""
 
     def __init__(self, db_driver):
-        """
-        Inicializa o gerador com um driver do Neo4j já conectado.
+        """Inicializa as variáveis de cache a serem usadas ao longo da classe
 
         Args:
-            db_driver (neo4j.Driver): O driver do Neo4j.
+            db_driver (_type_): Instância de conexão com o banco de dados
+
+        Raises:
+            ValueError: É retornado caso a conexão com o banco de dados não exista
         """
+
         if not db_driver:
             raise ValueError("O driver do Neo4j é necessário.")
         self.driver = db_driver
-        self.matriz_custo_df = None
-        print("Gerador de Treino inicializado e conectado ao banco.")
-
-    def _criar_matriz_com_pesos(self):
-        """Cria uma matriz com os grupos principais, exercício e seus respectivos pesos somados"""
         
+        self.df_completo = None  # Armazena os dados brutos (Grupo, Musculo, Exercicio, Peso)
+        self.matriz_grupo_df = None 
+        self.matriz_musculo_df = None
+        self.grupo_para_musculos_map = None
+        
+        print("Gerador de Treino inicializado.")
+
+    def _carregar_cache_dados(self):
+        """"""
+        if self.df_completo is not None:
+            return # Já está carregado
+
+        print("Baixando dados do Neo4j Aura...")
+
+        # String que irá se comunicar com o banco de dados pela linguagem CYPHER
+        # Coleta os dados de todos os vértices e arestas do Neo4j Aura
         query = """
         MATCH (g:GrupoMuscular)-[:POSSUI]->(m:Musculo)-[r:É_ATIVADO]->(e:Exercicio)
-        RETURN g.nome AS Grupo, e.nome AS Exercicio, SUM(r.peso) AS ScoreTotal
+        RETURN g.nome AS Grupo, m.nome AS Musculo, e.nome AS Exercicio, r.peso AS Peso
         """
+
+        # Abre uma sessão no banco de dados para rodar a QUERY e pegar os dados
         with self.driver.session(database="neo4j") as session:
             results = session.run(query)
             data = [record.data() for record in results]
         
         if not data:
-            raise Exception("Erro ao gerar a matriz. Verifique os valores da sua database")
-
-        # Pivota os dados para criar a matriz Grupo x Exercício
-        df = pd.DataFrame(data)
-        self.matriz_custo_df = df.pivot(
-            index='Grupo', 
-            columns='Exercicio', 
-            values='ScoreTotal'
-        ).fillna(0)
+            raise Exception("O banco de dados parece vazio. Popule-o primeiro.")
         
-        print(f"Matriz gerada com ({self.matriz_custo_df.shape[0]} grupos, {self.matriz_custo_df.shape[1]} exercícios)")
+        self.df_completo = pd.DataFrame(data)
+        print(f"Dados carregados localmente: {len(self.df_completo)} registros.")
+
+    def _get_matriz_grupo_exercicio(self):
+        """Gera a matriz Grupo x Exercicio via Pandas"""
+
+        self._carregar_cache_dados()
+        
+        if self.matriz_grupo_df is None:
+            # Agrupa por Grupo e Exercicio e soma os pesos
+            df_agrupado = self.df_completo.groupby(['Grupo', 'Exercicio'])['Peso'].sum().reset_index()
+            
+            self.matriz_grupo_df = df_agrupado.pivot(
+                index='Grupo', columns='Exercicio', values='Peso'
+            ).fillna(0)
+            
+        return self.matriz_grupo_df
+
+    def _get_matriz_musculo_exercicio(self):
+        """Gera a matriz Musculo x Exercicio via Pandas"""
+        self._carregar_cache_dados()
+        
+        if self.matriz_musculo_df is None:
+            # Filtra apenas as colunas relevantes (ignorando o Grupo)
+            # e remove duplicatas. Isso garante que cada par (Musculo, Exercicio) seja único.
+            df_unique = self.df_completo[['Musculo', 'Exercicio', 'Peso']].drop_duplicates()
+            
+            self.matriz_musculo_df = df_unique.pivot(
+                index='Musculo', columns='Exercicio', values='Peso'
+            ).fillna(0)
+            
+        return self.matriz_musculo_df
+
+    def _get_mapa_grupo_musculo(self):
+        """Gera o mapa Grupo -> Músculos via Pandas."""
+        self._carregar_cache_dados()
+        
+        if self.grupo_para_musculos_map is None:
+            grouped = self.df_completo.groupby('Grupo')['Musculo'].unique()
+            self.grupo_para_musculos_map = grouped.to_dict()
+            # Converte numpy arrays para listas
+            for k, v in self.grupo_para_musculos_map.items():
+                self.grupo_para_musculos_map[k] = v.tolist()
+                
+        return self.grupo_para_musculos_map
+
 
 
     def gerar_treino_full_body(self, dias_por_semana: int, grupos_alvo=None):
-        """
-        Gera treinos 'Full Body' para (N) dias, usando o Problema de Alocação
-        para maximizar o score MVIC, garantindo variedade.
-
-        Args:
-            dias_por_semana (int): Quantos treinos (A, B, C...) gerar.
-            grupos_alvo (list, optional): Lista de grupos a treinar. 
-                                         Se None, usa os principais.
-        """
+        """Gera treinos usando Matching Bipartido (Algoritmo Húngaro)."""
         
-        if self.matriz_custo_df is None:
-            self._criar_matriz_com_pesos()
+        matriz_completa = self._get_matriz_grupo_exercicio()
 
         if grupos_alvo is None:
-            grupos_alvo = [
-                'Peitoral', 'Ombro', 'Triceps', 'Biceps', 
-                'Ante-braço', 'Costas', 'Abdômen', 'Quadríceps',
-                'Posterior', 'Adutor', 'Panturrilha', 'Glúteo'
-            ]
-        
-        matriz_focada = self.matriz_custo_df.loc[grupos_alvo]
-        
-        #Colocando o negativo pois a função do scipy minimiza, ao invés de maximizar
-        matriz_custo_negativa = -(matriz_focada.copy())
+            grupos_alvo = matriz_completa.index.tolist()
 
+        # Filtra apenas os grupos pedidos pelo usuário
+        matriz_focada = matriz_completa.loc[grupos_alvo]
+        
+        # Algoritmo de Otimização
+        matriz_custo_negativa = -(matriz_focada.copy())
         treinos_gerados = {}
         exercicios_ja_usados = []
 
@@ -93,43 +132,101 @@ class GeradorTreino:
                 exercicio = matriz_focada.columns[e_idx]
                 score = matriz_focada.iloc[g_idx, e_idx]
                 
-                treino_do_dia.append({
-                    "grupo_alvo": grupo,
-                    "exercicio_escolhido": exercicio,
-                    "score_mvic_total": round(score, 2)
-                })
-                
-                exercicios_ja_usados.append(exercicio)
+                if score > 0:
+                    treino_do_dia.append({
+                        "grupo_alvo": grupo,
+                        "exercicio_escolhido": exercicio,
+                        "score_mvic_total": round(score, 2)
+                    })
+                    exercicios_ja_usados.append(exercicio)
             
             treinos_gerados[f"Treino {dia_label}"] = treino_do_dia
 
         return treinos_gerados
 
+    
+    def gerar_treino_hipertrofia(self, grupos_alvo: list, num_exercicios: int):
+        """Gera treino de hipertrofia usando algoritmo Greedy (Top-K)."""
+        
+        matriz_detalhada = self._get_matriz_musculo_exercicio()
+        mapa_grupos = self._get_mapa_grupo_musculo()
+        
+        # Identifica os músculos alvo
+        musculos_alvo = set()
+        for grupo in grupos_alvo:
+            if grupo in mapa_grupos:
+                musculos_alvo.update(mapa_grupos[grupo])
+        
+        if not musculos_alvo:
+            print("Nenhum músculo encontrado para os grupos informados.")
+            return []
+
+        # Filtra a matriz apenas para os músculos desejados
+        # O reindex garante que não quebre se faltar algum músculo
+        musculos_validos = [m for m in musculos_alvo if m in matriz_detalhada.index]
+        matriz_focada = matriz_detalhada.loc[musculos_validos]
+        
+        # Algoritmo Greedy: Soma scores e pega os Top-K
+        score_total_por_exercicio = matriz_focada.sum(axis=0)
+        exercicios_ordenados = score_total_por_exercicio.sort_values(ascending=False)
+        
+        treino_gerado = []
+        top_k = exercicios_ordenados.head(num_exercicios)
+        
+        for exercicio, score in top_k.items():
+            if score == 0: continue
+                
+            # Recupera detalhes de ativação
+            detalhes = matriz_focada[exercicio][matriz_focada[exercicio] > 0]
+            
+            treino_gerado.append({
+                "exercicio_escolhido": exercicio,
+                "score_mvic_total": round(score, 2),
+                "musculos_ativados": detalhes.to_dict()
+            })
+            
+        return treino_gerado
+
+
 # Driver Code
 
-URI = "neo4j://127.0.0.1:7687"
-AUTH = ("neo4j", "DiscreteTraining")
+URI = "neo4j+ssc://87ac44c9.databases.neo4j.io"
+AUTH = ("neo4j", "qP5nlLhuF1ELaAXiEL2hv0wTAqTuz436Hvqs9TNVkRQ")
 ARQUIVO_DADOS = "Training_Data.xlsx" 
 
 if __name__ == "__main__":
     print("Inicializando processo de geração de treino...")
     
     try:
-        # 2. Gerar o Treino
-        print("\nFase 2: Gerando o treino...")
+        print("\nGerando os treinos...")
         
         with GraphDatabase.driver(URI, auth=AUTH) as driver:
             
             gerador = GeradorTreino(driver)
             
             DIAS_DE_TREINO = 3
-            treinos = gerador.gerar_treino_full_body(dias_por_semana=DIAS_DE_TREINO)
+            treinos_full_body = gerador.gerar_treino_full_body(dias_por_semana=DIAS_DE_TREINO)
             
-            print("\n --- LISTA DE TREINOS GERADOS --- ")
-            for dia, exercicios in treinos.items():
+            print("\n---- [RESULTADO] TREINOS FULL BODY (Matching) ----")
+            for dia, exercicios in treinos_full_body.items():
                 print(f"\n========== {dia} ==========")
                 for ex in exercicios:
                     print(f"  Grupo: {ex['grupo_alvo']:<12} | Exercício: {ex['exercicio_escolhido']:<25} | Score: {ex['score_mvic_total']}")
+
+            GRUPOS_HIPERTROFIA = ['Peitoral', 'Ombro', 'Triceps']
+            NUM_EXERCICIOS = 6
+            
+            print(f"\n--- [RESULTADO] TREINO HIPERTROFIA (Greedy Top-K) para {GRUPOS_HIPERTROFIA} ---")
+            treino_split = gerador.gerar_treino_hipertrofia(
+                grupos_alvo=GRUPOS_HIPERTROFIA,
+                num_exercicios=NUM_EXERCICIOS
+            )
+            
+            for i, ex in enumerate(treino_split):
+                print(f"\n {i+1}. Exercício: {ex['exercicio_escolhido']} (Score Total: {ex['score_mvic_total']})")
+                for musculo, peso in ex['musculos_ativados'].items():
+                    print(f"     - Ativa: {musculo:<25} (Peso: {peso})")
+
 
     except Exception as e:
         print(f"############### Ocorreu um erro fatal: {e} ##################")
