@@ -85,8 +85,18 @@ class Neo4jDatabase:
         """Fecha a conexão com o banco ao terminar as operações com o banco"""
         self.close()
 
-    def _run_query(self, query, **params):
-        """Roda o código CYPHER na query do banco de dados"""
+    def _run_query(self, query: str, **params) -> list:
+        """Roda o código CYPHER na query do banco de dados
+
+        Args:
+            query (str): Código Cypher que será lançado no banco de dados
+
+        Raises:
+            Exception: Caso ocorra erro ao inserir o código
+
+        Returns:
+            list: Lista de informações que foram pedidas na interação com o banco
+        """
 
         if not self.driver:
             raise Exception("Driver não está conectado.")
@@ -109,24 +119,21 @@ class Neo4jDatabase:
         print("Banco de dados limpo.")
 
     def popular_grupos_e_musculos(self, musculos_df):
-        """Transforma o df de músculos em um dicionário e o insere no banco de dados de uma vez só"""
-        print(f"Enviando lote de {len(musculos_df)} músculos para a nuvem...")
+        print(f"Enviando estrutura muscular ({len(musculos_df)} pares) para a nuvem...")
         
-        # Converte o DataFrame para uma lista de dicionários, evitando várias chamadas ao banco de dados
         batch_data = musculos_df.rename(columns={
             'Múculo Principal': 'grupo', 
             'Músculo Secundário': 'subgrupo'
         }).to_dict('records')
 
-        # String que irá se comunicar com o banco de dados pela linguagem CYPHER
         query = """
         UNWIND $batch AS row
         MERGE (g:GrupoMuscular {nome: row.grupo})
-        MERGE (m:Musculo {nome: row.subgrupo})
+        MERGE (m:Musculo {nome: row.subgrupo, grupo: row.grupo}) 
         MERGE (g)-[:POSSUI]->(m)
         """
         self._run_query(query, batch=batch_data)
-        print("Vértices de Músculos e Grupos criados.")
+        print("Vértices de Músculos e Grupos sincronizados com distinção de grupo.")
 
     def popular_exercicios(self, exercicios_lista):
         """Insere a lista de exercícios recebida no banco do Neo4j Aura"""
@@ -142,39 +149,39 @@ class Neo4jDatabase:
         print("Nós de Exercícios criados.")
 
     def criar_relacionamentos_ativacao(self, dados_longos_df):
-        """Cria arestas de relacionamento entre os vértices de musculo e exercícios"""
-
-        print(f"Enviando lote de {len(dados_longos_df)} relacionamentos...")
+        print(f"Enviando {len(dados_longos_df)} pesos de ativação...")
         
         batch_data = dados_longos_df.rename(columns={
             'Exercicio': 'exercicio',
             'Músculo Secundário': 'musculo',
+            'Múculo Principal': 'grupo',
             'Peso': 'peso'
         }).to_dict('records')
 
-        # String que irá se comunicar com o banco de dados pela linguagem CYPHER
+
         query = """
         UNWIND $batch AS row
         MATCH (e:Exercicio {nome: row.exercicio})
-        MATCH (m:Musculo {nome: row.musculo})
+        MATCH (m:Musculo {nome: row.musculo, grupo: row.grupo})
         MERGE (m)-[r:É_ATIVADO]->(e)
         SET r.peso = row.peso
         """
         self._run_query(query, batch=batch_data)
-        print("Relacionamentos de ativação criados com sucesso.")
+        print("Relacionamentos de ativação criados.")
 
 
 
 # Driver Code
 
-URI = "neo4j+s://87ac44c9.databases.neo4j.io"
+URI = "neo4j+ssc://87ac44c9.databases.neo4j.io"
 AUTH = ("neo4j", "qP5nlLhuF1ELaAXiEL2hv0wTAqTuz436Hvqs9TNVkRQ")
 ARQUIVO_DADOS = "Training_Data.xlsx" 
 
 if __name__ == "__main__":
-    print("Inicializando processo de geração de treino...")
+    print("Inicializando processo de população do banco de dados...")
     
     try:
+        # Processando os dados do excel - Deve estar na mesma pasta do arquivo!!
         dados_processados = ProcessadorDadosTreino("Training_Data.xlsx").processar()
         
         with Neo4jDatabase(URI, AUTH) as db:
