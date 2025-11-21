@@ -25,7 +25,7 @@ class GeradorTreino:
             raise ValueError("O driver do Neo4j é necessário.")
         self.driver = db_driver
         
-        self.df_completo = None  # Armazena os dados brutos (Grupo, Musculo, Exercicio, Peso)
+        self.df_completo = None
         self.matriz_grupo_df = None 
         self.matriz_musculo_df = None
         self.grupo_para_musculos_map = None
@@ -33,28 +33,26 @@ class GeradorTreino:
         print("Gerador de Treino inicializado.")
 
     def _carregar_cache_dados(self):
-        """"""
         if self.df_completo is not None:
-            return # Já está carregado
+            return 
 
-        print("Baixando dados do Neo4j Aura...")
+        print("Baixando dados do Neo4j Aura (download único)...")
 
-        # String que irá se comunicar com o banco de dados pela linguagem CYPHER
-        # Coleta os dados de todos os vértices e arestas do Neo4j Aura
         query = """
         MATCH (g:GrupoMuscular)-[:POSSUI]->(m:Musculo)-[r:É_ATIVADO]->(e:Exercicio)
         RETURN g.nome AS Grupo, m.nome AS Musculo, e.nome AS Exercicio, r.peso AS Peso
         """
-
-        # Abre uma sessão no banco de dados para rodar a QUERY e pegar os dados
         with self.driver.session(database="neo4j") as session:
             results = session.run(query)
             data = [record.data() for record in results]
         
         if not data:
             raise Exception("O banco de dados parece vazio. Popule-o primeiro.")
-        
+            
         self.df_completo = pd.DataFrame(data)
+        
+        self.df_completo['ID_Musculo'] = self.df_completo['Grupo'] + " > " + self.df_completo['Musculo']
+        
         print(f"Dados carregados localmente: {len(self.df_completo)} registros.")
 
     def _get_matriz_grupo_exercicio(self):
@@ -73,28 +71,28 @@ class GeradorTreino:
         return self.matriz_grupo_df
 
     def _get_matriz_musculo_exercicio(self):
-        """Gera a matriz Musculo x Exercicio via Pandas"""
         self._carregar_cache_dados()
         
         if self.matriz_musculo_df is None:
-            # Filtra apenas as colunas relevantes (ignorando o Grupo)
-            # e remove duplicatas. Isso garante que cada par (Musculo, Exercicio) seja único.
-            df_unique = self.df_completo[['Musculo', 'Exercicio', 'Peso']].drop_duplicates()
+            # Usamos o ID_Musculo para pivotar
+            df_unique = self.df_completo[['ID_Musculo', 'Exercicio', 'Peso']].drop_duplicates()
             
             self.matriz_musculo_df = df_unique.pivot(
-                index='Musculo', columns='Exercicio', values='Peso'
+                index='ID_Musculo',
+                columns='Exercicio', 
+                values='Peso'
             ).fillna(0)
             
         return self.matriz_musculo_df
 
     def _get_mapa_grupo_musculo(self):
-        """Gera o mapa Grupo -> Músculos via Pandas."""
         self._carregar_cache_dados()
         
         if self.grupo_para_musculos_map is None:
-            grouped = self.df_completo.groupby('Grupo')['Musculo'].unique()
+            
+            grouped = self.df_completo.groupby('Grupo')['ID_Musculo'].unique()
             self.grupo_para_musculos_map = grouped.to_dict()
-            # Converte numpy arrays para listas
+            
             for k, v in self.grupo_para_musculos_map.items():
                 self.grupo_para_musculos_map[k] = v.tolist()
                 
@@ -162,7 +160,6 @@ class GeradorTreino:
             return []
 
         # Filtra a matriz apenas para os músculos desejados
-        # O reindex garante que não quebre se faltar algum músculo
         musculos_validos = [m for m in musculos_alvo if m in matriz_detalhada.index]
         matriz_focada = matriz_detalhada.loc[musculos_validos]
         

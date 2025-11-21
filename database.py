@@ -2,9 +2,6 @@ import pandas as pd
 from neo4j import GraphDatabase
 
 
-import pandas as pd
-from neo4j import GraphDatabase
-
 class ProcessadorDadosTreino:
     """
     Lida com o processamento e limpeza dos dados vindos do EXCEL.
