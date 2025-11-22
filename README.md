@@ -61,3 +61,9 @@ Vinda do método "processar" da classe "ProcessadorDadosTreino", criamos uma mat
 
 Primeiramente, pegamos a matriz de Músculos x Exercícios e limitamos ela apenas aos músculos selecionados na função. Após isso, somamos os scores para cada linha de Músculos e colocamos em ordem decrescente para posteriormente filtrar apenas os k maiores scores de exercícios.
 
+
+## Teoria do Algoritmo Húngaro 
+
+O problema a ser resolvido é que devemos achar um conjunto de arestas que ligam vértices de Músculos a exatamente um vértice de Exercício (Matching Perfeito) de forma que os pesos somados das arestas sejam as maiores possíveis.
+
+O algoritmo Húngaro minimiza os pesos, logo vamos negativar nossa matriz de custo para que ela nos retorne os valores máximos
