@@ -11,7 +11,7 @@ git clone https://github.com/Albuquerque07/discrete-training.git
 Ele criará uma pasta com os arquivos do portifólio. Entre nela e digite no terminal da pasta:
 
 ```
-pip install pandas, neo4j, scipy
+pip install pandas, neo4j, numpy
 ```
 
 ## Entendendo o código
@@ -55,7 +55,7 @@ Daí o método "processar" irá separar os valores em um dataframe de músculos 
 
 ### Gerando treino Full-Body
 
-Vinda do método "processar" da classe "ProcessadorDadosTreino", criamos uma matriz de custo com as variáveis: Músculo e Exercício; onde os pesos são cada célula da matriz. Dessa forma, o algoritmo aplica a função linear_sum_assignment que resolve o minimum weight matching problem em grafos bipartidos. Como queremos MAXIMIZAR a relação Grupo x Exercício, passamos a matriz de custo negativada para a função. Com os índices de Grupos e Exercícios que a função retorna nós acessamos os valores na matriz original e criamos uma lista de dicionário com cada dia de treino que foi passado de parâmetro.
+Vinda do método "processar" da classe "ProcessadorDadosTreino", criamos uma matriz de custo com as variáveis: Músculo e Exercício; onde os pesos são cada célula da matriz. Dessa forma, o algoritmo aplica o método _algoritmo_hungaro que resolve o minimum weight matching problem em grafos bipartidos. Como queremos MAXIMIZAR a relação Grupo x Exercício, passamos a matriz de custo negativada para a função. Com os índices de Grupos e Exercícios que a função retorna nós acessamos os valores na matriz original e criamos uma lista de dicionário com cada dia de treino que foi passado de parâmetro.
 
 ### Gerando treino de hipertrofia
 
@@ -64,6 +64,88 @@ Primeiramente, pegamos a matriz de Músculos x Exercícios e limitamos ela apena
 
 ## Teoria do Algoritmo Húngaro 
 
-O problema a ser resolvido é que devemos achar um conjunto de arestas que ligam vértices de Músculos a exatamente um vértice de Exercício (Matching Perfeito) de forma que os pesos somados das arestas sejam as maiores possíveis.
+O problema a ser resolvido é encontrar um **Matching Perfeito de Peso Máximo** em um grafo bipartido. Devemos selecionar um conjunto de arestas que ligam cada vértice de $U$ (Grupos Musculares) a exatamente um vértice de $V$ (Exercícios), de forma que a soma dos pesos dessas arestas seja maximizada. Lembrando que o algoritmo resolve MINIMIZAÇÃO, porém iremos passar uma matriz negativa para que se torne MAXIMIZAÇÃO
 
-O algoritmo Húngaro minimiza os pesos, logo vamos negativar nossa matriz de custo para que ela nos retorne os valores máximos
+Com a função "_algoritmo_hungaro" vamos iniciar 4 arrays de zeros:  
+* `u`: Potenciais das linhas i (Grupos Musculares),  
+* `v`: Potenciais das colunas j (Exercícios),  
+* `p`: Array de emparelhamento (Matching). Ex:  `p[j] = i` indica que a coluna `j` está emparelhada com a linha `i`,  
+* `way`: Array auxiliar para reconstruir o caminho de aumento. `way[j]` é a coluna que viemos para chegar na coluna `j`
+
+``` 
+u = np.zeros(num_linha + 1)
+v = np.zeros(num_colunas + 1)
+p = np.zeros(num_colunas + 1, dtype=int)
+way = np.zeros(num_colunas + 1, dtype=int)
+```
+
+Agora iremos iterar por cada Grupo Muscular para tentar liga-lo a um exercício por um caminho de aumento. `j0` será nossa coluna atual.
+
+```
+for i in range(1, num_linha + 1):
+    p[0] = i
+    j0 = 0
+```
+
+Criaremos agora a variável minv, que irá guardar os custos mínimos das arestas para adicionar na coluna j de exercício, e used, que vai dizer (por bool) quais colunas já visitamos:
+
+```
+minv = np.full(num_colunas + 1, float('inf'))
+used = np.zeros(num_colunas + 1, dtype=bool)
+```
+
+Iniciando agora a busca efetiva por caminhos de aumento. Vamos atribuir a coluna atual como utilizada (used[j0] = True), iremos criar uma variável que guarda o menor valor encontrado em `minv` (delta = float('inf')), iremos também criar `j1` que será a próxima coluna que iremos nos mover (que tem o menor delta atual)
+
+```
+while True:
+    used[j0] = True
+    i0 = p[j0]
+    delta = float('inf')
+    j1 = 0
+```
+
+Agora vamos calcular o custo reduzido atribuído a linha i, que estamos, e iterando em cada coluna j de exercícios. Sabendo que `CustoReduzido = CustoOriginal - PotencialLinha - PotencialColuna` nos diz quão longe a aresta está de ser "ótima". Se o CustoReduzido for 0, é uma candidata perfeita. Se for menor que o atual `min[j]`, atualizamos o valor e marcamos em `way` que chegamos lá vindo de ``j0``.
+
+```
+for j in range(1, num_colunas + 1):
+    if not used[j]:
+        custo_reduzido = matriz_custo[i0-1, j-1] - u[i0] - v[j]
+        
+        if custo_reduzido < minv[j]:
+            minv[j] = custo_reduzido
+            way[j] = j0
+        
+        if minv[j] < delta:
+            delta = minv[j]
+            j1 = j
+                
+```
+
+Se não encontramos um caminho direto (zero imediato), atualizamos os potenciais u e v usando o valor de delta. Isso altera o grafo matematicamente, fazendo com que novas arestas tornem se viáveis, permitindo que a busca continue sem violar as restrições.
+
+```
+for j in range(num_colunas + 1):
+    if used[j]:
+        u[p[j]] += delta
+        v[j] -= delta
+    else:
+        minv[j] -= delta
+```
+Para encerrar o `while True` de procura por caminhos aumentados, queremos que a linha que está ligada ao ``j0`` seja igual a zero, significando que o Exercício está livre (Nenhum Grupo Múscular está usando)
+
+```
+j0 = j1
+if p[j0] == 0:
+    break
+```
+
+Agora realizamos a troca das arestas ao longo do caminho encontrado. Usando o vetor ``way``, voltamos do exercício livre até o início. Cada exercício no caminho "troca de par", acomodando o novo Grupo Muscular ``i`` e realocando os anteriores para garantir que todos tenham um par ótimo.
+
+```
+while True:
+    j1 = way[j0]
+    p[j0] = p[j1]
+    j0 = j1
+    if j0 == 0:
+        break
+```

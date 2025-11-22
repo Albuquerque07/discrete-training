@@ -1,5 +1,5 @@
 import pandas as pd
-from scipy.optimize import linear_sum_assignment
+import numpy as np
 from neo4j import GraphDatabase
 
 try:
@@ -56,7 +56,7 @@ class GeradorTreino:
         print(f"Dados carregados localmente: {len(self.df_completo)} registros.")
 
     def _get_matriz_grupo_exercicio(self):
-        """Gera a matriz Grupo x Exercicio via Pandas"""
+        """Gera a matriz de custo Grupo x Exercicio"""
 
         self._carregar_cache_dados()
         
@@ -100,43 +100,115 @@ class GeradorTreino:
 
 
 
-    def gerar_treino_full_body(self, dias_por_semana: int, grupos_alvo=None):
-        """Gera treinos usando Matching Bipartido (Algoritmo Húngaro)."""
+    def _algoritmo_hungaro(self, matriz_custo):
+        """
+        Implementa o algoritmo Kuhn-Munkres (Húngaro) O(n^3).
+        Resolve o problema de Matching Perfeito de Custo Mínimo em Grafo Bipartido.
         
+        Args:
+            matriz_custo (np.array): Matriz (nxm) onde queremos minimizar a soma.
+            
+        Returns:
+            list: Lista de tuplas (indice_linha, indice_coluna) representando as arestas escolhidas.
+        """
+
+        num_linha, num_colunas = matriz_custo.shape
+        
+        u = np.zeros(num_linha + 1)
+        v = np.zeros(num_colunas + 1)
+        p = np.zeros(num_colunas + 1, dtype=int)
+        way = np.zeros(num_colunas + 1, dtype=int)
+
+        for i in range(1, num_linha + 1):
+            p[0] = i
+            j0 = 0
+            
+            minv = np.full(num_colunas + 1, float('inf'))
+            used = np.zeros(num_colunas + 1, dtype=bool)
+            
+            while True:
+                used[j0] = True
+                i0 = p[j0]
+                delta = float('inf')
+                j1 = 0
+                
+                for j in range(1, num_colunas + 1):
+                    if not used[j]:
+                        custo_reduzido = matriz_custo[i0-1, j-1] - u[i0] - v[j]
+                        
+                        if custo_reduzido < minv[j]:
+                            minv[j] = custo_reduzido
+                            way[j] = j0
+                        
+                        if minv[j] < delta:
+                            delta = minv[j]
+                            j1 = j
+                
+                for j in range(num_colunas + 1):
+                    if used[j]:
+                        u[p[j]] += delta
+                        v[j] -= delta
+                    else:
+                        minv[j] -= delta
+                
+                j0 = j1
+                if p[j0] == 0:
+                    break
+            
+            while True:
+                j1 = way[j0]
+                p[j0] = p[j1]
+                j0 = j1
+                if j0 == 0:
+                    break
+        
+        resultado = []
+        for j in range(1, num_colunas + 1):
+            if p[j] != 0:
+                resultado.append((p[j]-1, j-1))
+                
+        return resultado
+
+
+    def gerar_treino_full_body(self, dias_por_semana: int, grupos_alvo=None):
+        """Gera um treino Full-Body utilizando o algoritmo Húngaro"""
         matriz_completa = self._get_matriz_grupo_exercicio()
 
         if grupos_alvo is None:
             grupos_alvo = matriz_completa.index.tolist()
 
-        # Filtra apenas os grupos pedidos pelo usuário
-        matriz_focada = matriz_completa.loc[grupos_alvo]
+        matriz_focada_df = matriz_completa.loc[grupos_alvo]
         
-        # Algoritmo de Otimização
-        matriz_custo_negativa = -(matriz_focada.copy())
+        max_score = matriz_focada_df.max().max()
+        matriz_numpy = matriz_focada_df.to_numpy()
+        
+        matriz_custo = max_score - matriz_numpy 
+        
         treinos_gerados = {}
-        exercicios_ja_usados = []
+        exercicios_ja_usados_indices = []
 
         for dia in range(dias_por_semana):
             dia_label = chr(ord('A') + dia)
             
-            if exercicios_ja_usados:
-                matriz_custo_negativa[exercicios_ja_usados] = 999999 
-
-            grupos_indices, exercicios_indices = linear_sum_assignment(matriz_custo_negativa)
+            matriz_iteracao = matriz_custo.copy()
+            if exercicios_ja_usados_indices:
+                matriz_iteracao[:, exercicios_ja_usados_indices] = 999999
+            
+            pares_escolhidos = self._algoritmo_hungaro(matriz_iteracao)
 
             treino_do_dia = []
-            for g_idx, e_idx in zip(grupos_indices, exercicios_indices):
-                grupo = matriz_focada.index[g_idx]
-                exercicio = matriz_focada.columns[e_idx]
-                score = matriz_focada.iloc[g_idx, e_idx]
+            for linha_idx, col_idx in pares_escolhidos:
+                grupo = matriz_focada_df.index[linha_idx]
+                exercicio = matriz_focada_df.columns[col_idx]
+                score_real = matriz_numpy[linha_idx, col_idx]
                 
-                if score > 0:
+                if score_real > 0 and matriz_iteracao[linha_idx, col_idx] < 900000:
                     treino_do_dia.append({
                         "grupo_alvo": grupo,
                         "exercicio_escolhido": exercicio,
-                        "score_mvic_total": round(score, 2)
+                        "score_mvic_total": round(score_real, 2)
                     })
-                    exercicios_ja_usados.append(exercicio)
+                    exercicios_ja_usados_indices.append(col_idx)
             
             treinos_gerados[f"Treino {dia_label}"] = treino_do_dia
 
