@@ -258,7 +258,6 @@ class GeradorTreino:
 
 URI = "neo4j+ssc://87ac44c9.databases.neo4j.io"
 AUTH = ("neo4j", "qP5nlLhuF1ELaAXiEL2hv0wTAqTuz436Hvqs9TNVkRQ")
-ARQUIVO_DADOS = "Training_Data.xlsx" 
 
 if __name__ == "__main__":
     print("Inicializando processo de geração de treino...")

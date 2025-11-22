@@ -55,7 +55,11 @@ Daí o método "processar" irá separar os valores em um dataframe de músculos 
 
 ### Gerando treino Full-Body
 
-Vinda do método "processar" da classe "ProcessadorDadosTreino", criamos uma matriz de custo com as variáveis: Músculo e Exercício; onde os pesos são cada célula da matriz. Dessa forma, o algoritmo aplica o método _algoritmo_hungaro que resolve o minimum weight matching problem em grafos bipartidos. Como queremos MAXIMIZAR a relação Grupo x Exercício, passamos a matriz de custo negativada para a função. Com os índices de Grupos e Exercícios que a função retorna nós acessamos os valores na matriz original e criamos uma lista de dicionário com cada dia de treino que foi passado de parâmetro.
+Utilizando os dados processados pela classe `ProcessadorDadosTreino`, construímos uma **Matriz de Adjacência Ponderada** onde as linhas representam os **Grupos Musculares** e as colunas representam os **Exercícios**. O peso de cada célula $(i, j)$ corresponde à soma dos Scores MVIC do exercício $j$ para aquele grupo $i$.
+
+O algoritmo aplica o método `_algoritmo_hungaro` (implementação do algoritmo de Kuhn-Munkres) para resolver o **Problema de Emparelhamento Perfeito de Peso Mínimo** (*Minimum Weight Perfect Matching*) em grafos bipartidos.
+
+Como nosso objetivo é **MAXIMIZAR** a eficiência biomecânica (Score), realizamos uma transformação linear na matriz de entrada, negativando seus valores (multiplicação por -1). Os índices ótimos retornados pela função são então mapeados de volta aos nomes originais para compor a lista de dicionários contendo o treino de cada dia passado como parâmetro.
 
 ### Gerando treino de hipertrofia
 
@@ -66,7 +70,7 @@ Primeiramente, pegamos a matriz de Músculos x Exercícios e limitamos ela apena
 
 O problema a ser resolvido é encontrar um **Matching Perfeito de Peso Máximo** em um grafo bipartido. Devemos selecionar um conjunto de arestas que ligam cada vértice de $U$ (Grupos Musculares) a exatamente um vértice de $V$ (Exercícios), de forma que a soma dos pesos dessas arestas seja maximizada. Lembrando que o algoritmo resolve MINIMIZAÇÃO, porém iremos passar uma matriz negativa para que se torne MAXIMIZAÇÃO
 
-Com a função "_algoritmo_hungaro" vamos iniciar 4 arrays de zeros:  
+Na função "_algoritmo_hungaro" vamos iniciar 4 arrays de zeros:  
 * `u`: Potenciais das linhas i (Grupos Musculares),  
 * `v`: Potenciais das colunas j (Exercícios),  
 * `p`: Array de emparelhamento (Matching). Ex:  `p[j] = i` indica que a coluna `j` está emparelhada com a linha `i`,  

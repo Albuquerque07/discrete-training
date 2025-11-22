@@ -21,10 +21,10 @@ class ProcessadorDadosTreino:
     def _limpar_e_transformar(self):
 
 
-        self.df['Múculo Principal'] = self.df['Múculo Principal'].ffill()
+        self.df['Músculo Principal'] = self.df['Músculo Principal'].ffill()
         
         df_long = self.df.melt(
-            id_vars=['Múculo Principal', 'Músculo Secundário'],
+            id_vars=['Músculo Principal', 'Músculo Secundário'],
             var_name='Exercicio',
             value_name='Peso'
         )
@@ -40,7 +40,7 @@ class ProcessadorDadosTreino:
         self.dados_longos = self._limpar_e_transformar()
         
         self.musculos_unicos = self.dados_longos[
-            ['Múculo Principal', 'Músculo Secundário']
+            ['Músculo Principal', 'Músculo Secundário']
         ].drop_duplicates()
         
         self.exercicios_unicos = self.dados_longos['Exercicio'].drop_duplicates().tolist()
@@ -119,7 +119,7 @@ class Neo4jDatabase:
         print(f"Enviando estrutura muscular ({len(musculos_df)} pares) para a nuvem...")
         
         batch_data = musculos_df.rename(columns={
-            'Múculo Principal': 'grupo', 
+            'Músculo Principal': 'grupo', 
             'Músculo Secundário': 'subgrupo'
         }).to_dict('records')
 
@@ -151,7 +151,7 @@ class Neo4jDatabase:
         batch_data = dados_longos_df.rename(columns={
             'Exercicio': 'exercicio',
             'Músculo Secundário': 'musculo',
-            'Múculo Principal': 'grupo',
+            'Músculo Principal': 'grupo',
             'Peso': 'peso'
         }).to_dict('records')
 
@@ -172,14 +172,14 @@ class Neo4jDatabase:
 
 URI = "neo4j+ssc://87ac44c9.databases.neo4j.io"
 AUTH = ("neo4j", "qP5nlLhuF1ELaAXiEL2hv0wTAqTuz436Hvqs9TNVkRQ")
-ARQUIVO_DADOS = "Training_Data.xlsx" 
+ARQUIVO_DADOS = "TrainingData.xlsx" 
 
 if __name__ == "__main__":
     print("Inicializando processo de população do banco de dados...")
     
     try:
         # Processando os dados do excel - Deve estar na mesma pasta do arquivo!!
-        dados_processados = ProcessadorDadosTreino("Training_Data.xlsx").processar()
+        dados_processados = ProcessadorDadosTreino(ARQUIVO_DADOS).processar()
         
         with Neo4jDatabase(URI, AUTH) as db:
             
