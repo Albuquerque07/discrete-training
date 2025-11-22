@@ -221,7 +221,6 @@ class GeradorTreino:
         matriz_detalhada = self._get_matriz_musculo_exercicio()
         mapa_grupos = self._get_mapa_grupo_musculo()
         
-        # Identifica os músculos alvo
         musculos_alvo = set()
         for grupo in grupos_alvo:
             if grupo in mapa_grupos:
@@ -231,21 +230,19 @@ class GeradorTreino:
             print("Nenhum músculo encontrado para os grupos informados.")
             return []
 
-        # Filtra a matriz apenas para os músculos desejados
         musculos_validos = [m for m in musculos_alvo if m in matriz_detalhada.index]
         matriz_focada = matriz_detalhada.loc[musculos_validos]
         
-        # Algoritmo Greedy: Soma scores e pega os Top-K
         score_total_por_exercicio = matriz_focada.sum(axis=0)
         exercicios_ordenados = score_total_por_exercicio.sort_values(ascending=False)
         
-        treino_gerado = []
         top_k = exercicios_ordenados.head(num_exercicios)
         
+        treino_gerado = []
         for exercicio, score in top_k.items():
-            if score == 0: continue
+            if score == 0: 
+                continue
                 
-            # Recupera detalhes de ativação
             detalhes = matriz_focada[exercicio][matriz_focada[exercicio] > 0]
             
             treino_gerado.append({
@@ -272,7 +269,6 @@ if __name__ == "__main__":
         with GraphDatabase.driver(URI, auth=AUTH) as driver:
             
             gerador = GeradorTreino(driver)
-            
             DIAS_DE_TREINO = 3
             treinos_full_body = gerador.gerar_treino_full_body(dias_por_semana=DIAS_DE_TREINO)
             
